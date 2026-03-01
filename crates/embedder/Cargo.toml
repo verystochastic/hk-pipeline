@@ -1,0 +1,13 @@
+[package]
+name = "embedder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+tokenizers = "0.19"
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+serde_json.workspace = true

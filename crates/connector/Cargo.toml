@@ -1,0 +1,11 @@
+[package]
+name = "connector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+reqwest = { workspace = true }
+feed-rs = "1"
