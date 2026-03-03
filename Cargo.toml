@@ -24,4 +24,5 @@ connector = { path = "crates/connector" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 embedder = { path = "crates/embedder" }
+sink = { path = "crates/sink" }
 hf-hub = "0.5.0"
