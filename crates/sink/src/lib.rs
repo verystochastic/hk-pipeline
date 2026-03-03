@@ -113,4 +113,36 @@ impl SurrealSink {
         Ok(result)
     }
 
+    pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<SimilarArticle>> {
+        let vec_str = embedding.iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let query = format!(
+            "SELECT title, url, source, vector::similarity::cosine(embedding, [{}]) AS score
+            FROM articles
+            ORDER BY score DESC
+            LIMIT {}",
+           vec_str, limit
+        );
+
+        let mut result = self.db.query(query).await?;
+        let raw: Vec<serde_json::Value> = result.take(0)?;
+        
+        let articles = raw.into_iter()
+            .filter_map(|v| {
+                Some(SimilarArticle {
+                    title: v.get("title")?.as_str()?.to_string(),
+                    url: v.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()),
+                    source: v.get("source")?.as_str()?.to_string(),
+                    score: v.get("score")?.as_f64()? as f32,
+                })
+            })
+            .collect();
+
+
+        Ok(articles)
+    }
+
 }

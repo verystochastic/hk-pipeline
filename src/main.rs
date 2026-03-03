@@ -1,6 +1,6 @@
 use connector::{Connector, GdeltConnector};
 use embedder::Embedder;
-use sink::{ArticleRecord, SurrealSink};
+use sink::{ArticleRecord, SimilarArticle, SurrealSink};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -22,7 +22,6 @@ async fn main() -> anyhow::Result<()> {
 
     for article in &articles {
         let embedding = embedder.embed(&article.title)?;
-
         let inserted = sink
             .insert_if_new(ArticleRecord {
                 title: article.title.clone(),
@@ -32,7 +31,6 @@ async fn main() -> anyhow::Result<()> {
                 embedding,
             })
             .await?;
-
         if inserted {
             stored += 1;
             println!("Stored:   {}", article.title);
@@ -43,5 +41,33 @@ async fn main() -> anyhow::Result<()> {
     }
 
     println!("\nDone! {} stored, {} duplicates skipped.", stored, skipped);
+
+    // Similarity search
+    println!("\n--- Similarity Search ---");
+    let queries = vec![
+        "Boeing production problems and safety",
+        "electric aircraft and sustainable aviation",
+        "defense contracts and military aerospace",
+    ];
+
+    for query in queries {
+        println!("\nQuery: '{}'", query);
+        let query_embedding = embedder.embed(query)?;
+        let similar = sink.find_similar(&query_embedding, 3).await?;
+
+        if similar.is_empty() {
+            println!("  No results found.");
+        } else {
+            for (i, article) in similar.iter().enumerate() {
+                println!(
+                    "  {}. {} (score: {:.3})",
+                    i + 1,
+                    article.title,
+                    article.score
+                );
+            }
+        }
+    }
+
     Ok(())
 }
