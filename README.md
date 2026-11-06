@@ -32,4 +32,21 @@ cargo run --release -p hk-agent     # interactive session
 - **Transcripts:** every session is saved as JSONL in `agent-runs/`.
 - **Model:** defaults to `claude-opus-5-5`; change it with `--model` or `HK_AGENT_MODEL`.
 
+### Using it from Claude Code (MCP)
+
+`hk-mcp` serves the same tools over the [Model Context Protocol](https://modelcontextprotocol.io), so Claude Code, or any other MCP host, can drive the pipeline. The host runs the model, so this works with a Claude Pro or Max login and needs no API key.
+
+```sh
+cargo build --release -p hk-agent --bin hk-mcp
+claude mcp add hk -- "$PWD/target/release/hk-mcp" \
+  --reports-dir "$PWD/reports" --model-dir "$PWD/models/bge-small"
+claude   # then ask: "what's trending in aerospace safety? write a report"
+```
+
+- **Permissions:** Claude Code asks before each tool call, as it does for any MCP tool. Read tools are marked `readOnlyHint`.
+- **`--read-only`:** offers only `corpus_stats` and `search_articles`.
+- **Publish-level tools** are never offered over MCP.
+- **Protocol:** newline-delimited JSON-RPC over stdio, implemented in [`crates/agent/src/mcp.rs`](crates/agent/src/mcp.rs) with no SDK dependency. It supports `initialize`, `ping`, `tools/list` and `tools/call`.
+- If `ANTHROPIC_API_KEY` is set in your shell, Claude Code may use it instead of your subscription. Unset it to stay on the plan.
+
 See [`crates/agent/README.md`](crates/agent/README.md) for all options, how to add a tool, and the tests.

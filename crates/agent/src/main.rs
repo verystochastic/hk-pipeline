@@ -2,14 +2,12 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use embedder::Embedder;
 use hk_agent::harness::{Agent, Config, Outcome};
 use hk_agent::llm::AnthropicClient;
-use hk_agent::pipeline_tools::{self, PipelineContext};
-use hk_agent::tool::{Approver, DenyApprover, Policy, TerminalApprover, ToolRegistry};
-use sink::SurrealSink;
+use hk_agent::setup::PipelineArgs;
+use hk_agent::tool::{Approver, DenyApprover, Policy, TerminalApprover};
 
 #[derive(Parser)]
 #[command(name = "hk-agent", about = "Claude-driven analyst for hk-pipeline")]
@@ -35,26 +33,12 @@ struct Cli {
     #[arg(long)]
     confirm_writes: bool,
 
-    /// Folder for Markdown reports written by the agent
-    #[arg(long, default_value = "reports")]
-    reports_dir: PathBuf,
-
     /// Folder for JSONL transcripts of each session
     #[arg(long, default_value = "agent-runs")]
     transcript_dir: PathBuf,
 
-    #[arg(long, env = "SURREAL_URL", default_value = "127.0.0.1:8000")]
-    surreal_url: String,
-    #[arg(long, env = "SURREAL_USER", default_value = "root")]
-    surreal_user: String,
-    #[arg(long, env = "SURREAL_PASS", default_value = "root", hide_env_values = true)]
-    surreal_pass: String,
-
-    #[arg(long, env = "MODEL_DIR", default_value = "models/bge-small")]
-    model_dir: PathBuf,
-
-    #[arg(long, default_value_t = 0.85)]
-    trend_similarity_threshold: f32,
+    #[command(flatten)]
+    pipeline: PipelineArgs,
 }
 
 #[tokio::main]
@@ -70,20 +54,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let interactive = cli.prompt.is_none();
 
-    let embedder = Embedder::new(&cli.model_dir)?;
-    let sink = SurrealSink::new(&cli.surreal_url, &cli.surreal_user, &cli.surreal_pass)
-        .await
-        .with_context(|| format!("could not connect to SurrealDB at {}", cli.surreal_url))?;
-    sink.setup().await?;
-
-    let ctx = Arc::new(PipelineContext::new(
-        embedder,
-        sink,
-        cli.reports_dir.clone(),
-        cli.trend_similarity_threshold,
-    ));
-    let mut tools = ToolRegistry::default();
-    pipeline_tools::register(&mut tools, ctx);
+    let tools = cli.pipeline.build_tools().await?;
 
     // A one-shot run with piped input has nobody to ask, so approvals are refused.
     let approver: Arc<dyn Approver> = if interactive || atty_stdin() {
