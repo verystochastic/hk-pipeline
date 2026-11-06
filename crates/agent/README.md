@@ -1,6 +1,6 @@
 # hk-agent
 
-Ask Claude questions about the hk-pipeline corpus. It can ingest more data, run trend analysis and write Markdown reports, and it publishes to the trend oracle only after you approve each transaction.
+Ask Claude questions about the hk-pipeline corpus. It can ingest more articles, run trend analysis and write Markdown reports.
 
 ## Run
 
@@ -19,19 +19,16 @@ cargo run --release -p hk-agent            # interactive session
 | `corpus_stats` | read | Counts articles per source, with the oldest and newest insert times |
 | `search_articles` | read | Semantic search over titles |
 | `ingest_gdelt` | write | Fetches, embeds and stores new GDELT articles |
-| `ingest_solana` | write | Same for Solana via Helius; only offered when `HELIUS_API_KEY` is set |
 | `analyze_trends` | write | Clusters the corpus, ranks trends against the previous run and saves snapshots |
 | `write_report` | write | Saves Markdown to `--reports-dir`, plain file names only |
-| `oracle_dry_run` | read | Shows what would be published; needs `--oracle-mode dry-run` or `publish` |
-| `oracle_publish` | publish | Sends `publish_trend`; needs `--oracle-mode publish` |
 
 ## Approvals
 
 - **Read:** runs without asking.
 - **Write:** runs without asking unless you pass `--confirm-writes`.
-- **Publish:** you must type `publish` each time. With no terminal attached, every approval request is refused.
+- **Publish:** for irreversible actions, which no current tool has. You must type `publish` each time.
 
-Oracle tools take a `trend_index` from the most recent `analyze_trends` call, so the model can only publish a trend the pipeline computed.
+With no terminal attached, every approval request is refused.
 
 ## Options
 
@@ -42,7 +39,7 @@ Oracle tools take a `trend_index` from the most recent `analyze_trends` call, so
 | `--transcript-dir` | `agent-runs/`, one JSONL file per session |
 | `--reports-dir` | `reports/` |
 
-SurrealDB, model directory and oracle flags match `hk-pipeline`.
+SurrealDB and model directory flags match `hk-pipeline`.
 
 ## Layout
 

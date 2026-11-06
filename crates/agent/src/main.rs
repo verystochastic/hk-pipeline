@@ -7,20 +7,9 @@ use clap::Parser;
 use embedder::Embedder;
 use hk_agent::harness::{Agent, Config, Outcome};
 use hk_agent::llm::AnthropicClient;
-use hk_agent::pipeline_tools::{self, OracleTools, PipelineContext};
+use hk_agent::pipeline_tools::{self, PipelineContext};
 use hk_agent::tool::{Approver, DenyApprover, Policy, TerminalApprover, ToolRegistry};
-use oracle::OracleClient;
 use sink::SurrealSink;
-
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-enum OracleMode {
-    /// No oracle tools.
-    Off,
-    /// Offer oracle_dry_run only.
-    DryRun,
-    /// Also offer oracle_publish; every call still needs typed approval.
-    Publish,
-}
 
 #[derive(Parser)]
 #[command(name = "hk-agent", about = "Claude-driven analyst for hk-pipeline")]
@@ -42,7 +31,7 @@ struct Cli {
     #[arg(long, default_value_t = 25)]
     max_turns: usize,
 
-    /// Ask before every write (ingest, snapshots, reports), not just publishing
+    /// Ask before every write (ingest, snapshots, reports)
     #[arg(long)]
     confirm_writes: bool,
 
@@ -64,18 +53,8 @@ struct Cli {
     #[arg(long, env = "MODEL_DIR", default_value = "models/bge-small")]
     model_dir: PathBuf,
 
-    #[arg(long, env = "HELIUS_API_KEY", hide_env_values = true)]
-    helius_api_key: Option<String>,
-
     #[arg(long, default_value_t = 0.85)]
     trend_similarity_threshold: f32,
-
-    #[arg(long, value_enum, default_value = "off")]
-    oracle_mode: OracleMode,
-    #[arg(long, env = "ORACLE_CLUSTER", default_value = "devnet")]
-    oracle_cluster: String,
-    #[arg(long, env = "ORACLE_PUBLISHER_KEYPAIR")]
-    oracle_publisher_keypair: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -91,21 +70,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let interactive = cli.prompt.is_none();
 
-    let oracle = match cli.oracle_mode {
-        OracleMode::Off => None,
-        _ => {
-            let path = cli.oracle_publisher_keypair.as_ref().context(
-                "--oracle-publisher-keypair (or ORACLE_PUBLISHER_KEYPAIR) is required unless --oracle-mode off",
-            )?;
-            Some(OracleClient::new(&cli.oracle_cluster, path)?)
-        }
-    };
-    let oracle_tools = match cli.oracle_mode {
-        OracleMode::Off => OracleTools::None,
-        OracleMode::DryRun => OracleTools::DryRun,
-        OracleMode::Publish => OracleTools::DryRunAndPublish,
-    };
-
     let embedder = Embedder::new(&cli.model_dir)?;
     let sink = SurrealSink::new(&cli.surreal_url, &cli.surreal_user, &cli.surreal_pass)
         .await
@@ -115,13 +79,11 @@ async fn main() -> Result<()> {
     let ctx = Arc::new(PipelineContext::new(
         embedder,
         sink,
-        oracle,
-        cli.helius_api_key.filter(|k| !k.is_empty()),
         cli.reports_dir.clone(),
         cli.trend_similarity_threshold,
     ));
     let mut tools = ToolRegistry::default();
-    pipeline_tools::register(&mut tools, ctx, oracle_tools);
+    pipeline_tools::register(&mut tools, ctx);
 
     // A one-shot run with piped input has nobody to ask, so approvals are refused.
     let approver: Arc<dyn Approver> = if interactive || atty_stdin() {

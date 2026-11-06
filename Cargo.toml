@@ -6,7 +6,6 @@ members = [
   "crates/embedder",
   "crates/sink",
   "crates/drift",
-  "crates/oracle",
   "crates/agent",
 ]
 resolver = "2"
@@ -33,7 +32,6 @@ connector = { path = "crates/connector" }
 embedder = { path = "crates/embedder" }
 sink = { path = "crates/sink" }
 drift = { path = "crates/drift" }
-oracle = { path = "crates/oracle" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

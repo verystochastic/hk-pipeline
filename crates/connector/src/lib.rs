@@ -2,9 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 pub use types::Article;
 
-mod solana;
-pub use solana::SolanaConnector;
-
 #[async_trait]
 pub trait Connector: Send + Sync {
     async fn fetch(&self) -> Result<Vec<Article>>;

@@ -1,8 +1,4 @@
 //! Tools that wrap the hk-pipeline crates for the agent.
-//!
-//! Oracle tools take a trend *index* from the most recent `analyze_trends`
-//! call rather than a label and score, so the model can't publish a trend
-//! the pipeline didn't actually compute.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -10,48 +6,33 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use connector::{Connector, GdeltConnector, SolanaConnector};
+use connector::{Connector, GdeltConnector};
 use embedder::Embedder;
-use oracle::OracleClient;
 use serde_json::{json, Value};
 use sink::{ArticleRecord, SurrealSink};
-use tokio::sync::Mutex;
 use types::{Article, ClusterSnapshot, TrendSignal};
 
 use crate::tool::{Risk, Tool, ToolRegistry};
 
-struct LastAnalysis {
-    run_id: String,
-    trends: Vec<TrendSignal>,
-}
-
 pub struct PipelineContext {
     pub embedder: Arc<Embedder>,
     pub sink: SurrealSink,
-    pub oracle: Option<OracleClient>,
-    pub helius_api_key: Option<String>,
     pub reports_dir: PathBuf,
     pub trend_similarity_threshold: f32,
-    last_analysis: Mutex<Option<LastAnalysis>>,
 }
 
 impl PipelineContext {
     pub fn new(
         embedder: Embedder,
         sink: SurrealSink,
-        oracle: Option<OracleClient>,
-        helius_api_key: Option<String>,
         reports_dir: PathBuf,
         trend_similarity_threshold: f32,
     ) -> Self {
         Self {
             embedder: Arc::new(embedder),
             sink,
-            oracle,
-            helius_api_key,
             reports_dir,
             trend_similarity_threshold,
-            last_analysis: Mutex::new(None),
         }
     }
 
@@ -91,17 +72,6 @@ impl PipelineContext {
         }))
     }
 
-    async fn trend_at(&self, index: usize) -> Result<(TrendSignal, String)> {
-        let guard = self.last_analysis.lock().await;
-        let last = guard
-            .as_ref()
-            .context("no trends yet: call analyze_trends first")?;
-        let trend = last
-            .trends
-            .get(index)
-            .with_context(|| format!("trend_index {index} is out of range (0..{})", last.trends.len()))?;
-        Ok((trend.clone(), last.run_id.clone()))
-    }
 }
 
 fn usize_arg(input: &Value, key: &str, default: usize, min: usize, max: usize) -> Result<usize> {
@@ -143,9 +113,9 @@ pub fn safe_report_name(name: &str) -> Result<String> {
     Ok(if name.ends_with(".md") { name.to_string() } else { format!("{name}.md") })
 }
 
-fn trend_json(index: usize, t: &TrendSignal) -> Value {
+fn trend_json(rank: usize, t: &TrendSignal) -> Value {
     json!({
-        "trend_index": index,
+        "rank": rank + 1,
         "label": t.label,
         "score": t.score,
         "velocity": t.velocity,
@@ -261,32 +231,10 @@ impl IngestGdelt {
 }
 
 tool!(
-    IngestSolana,
-    "ingest_solana",
-    Risk::Write,
-    "Fetch recently created Solana tokens/NFTs and categorized transactions from the latest block via Helius, embed them, and store new ones.",
-    json!({
-        "type": "object",
-        "properties": {
-            "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Default 50" }
-        }
-    })
-);
-
-impl IngestSolana {
-    async fn run(&self, input: Value) -> Result<Value> {
-        let limit = usize_arg(&input, "limit", 50, 1, 100)?;
-        let key = self.0.helius_api_key.clone().context("no Helius API key configured")?;
-        let articles = SolanaConnector::new(key, limit).fetch().await?;
-        self.0.ingest(articles).await
-    }
-}
-
-tool!(
     AnalyzeTrends,
     "analyze_trends",
     Risk::Write,
-    "Cluster the whole corpus (k-means on embeddings) and rank trends by growth against the previous saved run. Saves this run's cluster snapshots so the next run can measure velocity. Returns clusters and trends; each trend has a trend_index used by the oracle tools.",
+    "Cluster the whole corpus (k-means on embeddings) and rank trends by growth against the previous saved run. Saves this run's cluster snapshots so the next run can measure velocity. Returns clusters and ranked trends.",
     json!({
         "type": "object",
         "properties": {
@@ -339,68 +287,12 @@ impl AnalyzeTrends {
             .collect();
         let trend_list: Vec<Value> = trends.iter().enumerate().map(|(i, t)| trend_json(i, t)).collect();
 
-        *self.0.last_analysis.lock().await = Some(LastAnalysis { run_id: run_id.clone(), trends });
-
         Ok(json!({
             "run_id": run_id,
             "snapshot_saved": save,
             "had_previous_run": !previous.is_empty(),
             "clusters": clusters,
             "trends": trend_list,
-        }))
-    }
-}
-
-tool!(
-    OracleDryRun,
-    "oracle_dry_run",
-    Risk::Read,
-    "Show exactly what would be published to the on-chain trend oracle for a trend from the latest analyze_trends call. Sends nothing.",
-    json!({
-        "type": "object",
-        "properties": { "trend_index": { "type": "integer", "minimum": 0 } },
-        "required": ["trend_index"]
-    })
-);
-
-impl OracleDryRun {
-    async fn run(&self, input: Value) -> Result<Value> {
-        let index = usize_arg(&input, "trend_index", 0, 0, usize::MAX)?;
-        let oracle = self.0.oracle.as_ref().context("oracle is not configured")?;
-        let (trend, run_id) = self.0.trend_at(index).await?;
-        oracle.simulate_publish(&trend, &run_id)?;
-        Ok(json!({
-            "would_publish": trend_json(index, &trend),
-            "score_bps": (trend.score.clamp(0.0, 1.0) * 10_000.0) as u32,
-            "authority": oracle.authority_pubkey().to_string(),
-            "sent": false,
-        }))
-    }
-}
-
-tool!(
-    OraclePublish,
-    "oracle_publish",
-    Risk::Publish,
-    "Sign and send a publish_trend transaction for a trend from the latest analyze_trends call. Irreversible and costs SOL; the operator must approve each call. Run oracle_dry_run first.",
-    json!({
-        "type": "object",
-        "properties": { "trend_index": { "type": "integer", "minimum": 0 } },
-        "required": ["trend_index"]
-    })
-);
-
-impl OraclePublish {
-    async fn run(&self, input: Value) -> Result<Value> {
-        let index = usize_arg(&input, "trend_index", 0, 0, usize::MAX)?;
-        let oracle = self.0.oracle.as_ref().context("oracle is not configured")?;
-        let (trend, run_id) = self.0.trend_at(index).await?;
-        let initialized = oracle.ensure_initialized().await?.map(|s| s.to_string());
-        let sig = oracle.publish_trend(&trend, &run_id).await?;
-        Ok(json!({
-            "published": trend_json(index, &trend),
-            "initialize_signature": initialized,
-            "signature": sig.to_string(),
         }))
     }
 }
@@ -431,29 +323,12 @@ impl WriteReport {
     }
 }
 
-/// Which oracle tools to offer the model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OracleTools {
-    None,
-    DryRun,
-    DryRunAndPublish,
-}
-
-pub fn register(registry: &mut ToolRegistry, ctx: Arc<PipelineContext>, oracle: OracleTools) {
+pub fn register(registry: &mut ToolRegistry, ctx: Arc<PipelineContext>) {
     registry.register(CorpusStats(ctx.clone()));
     registry.register(SearchArticles(ctx.clone()));
     registry.register(IngestGdelt(ctx.clone()));
-    if ctx.helius_api_key.is_some() {
-        registry.register(IngestSolana(ctx.clone()));
-    }
     registry.register(AnalyzeTrends(ctx.clone()));
-    registry.register(WriteReport(ctx.clone()));
-    if oracle != OracleTools::None {
-        registry.register(OracleDryRun(ctx.clone()));
-    }
-    if oracle == OracleTools::DryRunAndPublish {
-        registry.register(OraclePublish(ctx));
-    }
+    registry.register(WriteReport(ctx));
 }
 
 #[cfg(test)]
@@ -484,10 +359,7 @@ mod tests {
             CorpusStats::spec_schema(),
             SearchArticles::spec_schema(),
             IngestGdelt::spec_schema(),
-            IngestSolana::spec_schema(),
             AnalyzeTrends::spec_schema(),
-            OracleDryRun::spec_schema(),
-            OraclePublish::spec_schema(),
             WriteReport::spec_schema(),
         ] {
             assert_eq!(schema["type"], "object");

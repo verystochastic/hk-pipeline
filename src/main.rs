@@ -1,53 +1,23 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use connector::{Connector, GdeltConnector, SolanaConnector};
+use connector::{Connector, GdeltConnector};
 use drift::{analyse, rank_trending};
 use embedder::Embedder;
-use oracle::OracleClient;
 use sink::{ArticleRecord, SurrealSink};
 use types::ClusterSnapshot;
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-enum Source {
-    Gdelt,
-    Solana,
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-enum OracleMode {
-    /// Never touch the network for oracle publishing.
-    Off,
-    /// Build the publish_trend instruction and log it; no transaction sent.
-    DryRun,
-    /// Actually sign and send the publish_trend transaction.
-    Publish,
-}
 
 #[derive(Parser)]
 #[command(name = "hk-pipeline", about = "News article ingestion and analysis pipeline")]
 struct Cli {
-    /// Data source to ingest from
-    #[arg(long, value_enum, default_value = "gdelt")]
-    source: Source,
-
-    /// Search query for GDELT (ignored for --source solana)
+    /// Search query for GDELT
     #[arg(short, long, default_value = "aerospace manufacturing safety")]
     query: String,
 
     /// Maximum articles to fetch from GDELT
     #[arg(long, default_value_t = 50)]
     max_results: usize,
-
-    /// Helius API key, required for --source solana
-    #[arg(long, env = "HELIUS_API_KEY", default_value = "")]
-    helius_api_key: String,
-
-    /// Maximum recently-created tokens/NFTs, and maximum transactions
-    /// sampled from the latest block, to fetch for --source solana
-    #[arg(long, default_value_t = 50)]
-    solana_limit: usize,
 
     /// SurrealDB WebSocket URL
     #[arg(long, env = "SURREAL_URL", default_value = "127.0.0.1:8000")]
@@ -69,20 +39,6 @@ struct Cli {
     /// same trend as a cluster from the previous run
     #[arg(long, default_value_t = 0.85)]
     trend_similarity_threshold: f32,
-
-    /// Whether to publish the top trend signal to the on-chain trend-oracle
-    /// program. Never sends a transaction unless explicitly set to "publish".
-    #[arg(long, value_enum, default_value = "off")]
-    oracle_mode: OracleMode,
-
-    /// Solana cluster or RPC URL for oracle publishing
-    #[arg(long, env = "ORACLE_CLUSTER", default_value = "devnet")]
-    oracle_cluster: String,
-
-    /// Keypair file for the oracle publisher authority; required unless
-    /// --oracle-mode is off
-    #[arg(long, env = "ORACLE_PUBLISHER_KEYPAIR")]
-    oracle_publisher_keypair: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -96,17 +52,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let connector: Box<dyn Connector> = match cli.source {
-        Source::Gdelt => Box::new(GdeltConnector::new(&cli.query, cli.max_results)),
-        Source::Solana => {
-            if cli.helius_api_key.is_empty() {
-                anyhow::bail!(
-                    "--helius-api-key (or HELIUS_API_KEY) is required when --source solana"
-                );
-            }
-            Box::new(SolanaConnector::new(cli.helius_api_key.clone(), cli.solana_limit))
-        }
-    };
+    let connector: Box<dyn Connector> = Box::new(GdeltConnector::new(&cli.query, cli.max_results));
     let embedder = Embedder::new(&cli.model_dir)?;
     let sink = SurrealSink::new(&cli.surreal_url, &cli.surreal_user, &cli.surreal_pass).await?;
     sink.setup().await?;
@@ -192,35 +138,6 @@ async fn main() -> Result<()> {
                     })
                     .collect();
                 sink.save_cluster_snapshots(&snapshots).await?;
-
-                match (&cli.oracle_mode, trending.first()) {
-                    (OracleMode::Off, _) | (_, None) => {
-                        if matches!(cli.oracle_mode, OracleMode::Off) {
-                            tracing::debug!("Oracle publishing disabled (--oracle-mode off)");
-                        } else {
-                            tracing::info!("No trend signal available to publish this run");
-                        }
-                    }
-                    (mode, Some(top)) => {
-                        let keypair_path = cli.oracle_publisher_keypair.as_ref().context(
-                            "--oracle-publisher-keypair (or ORACLE_PUBLISHER_KEYPAIR) is required \
-                             when --oracle-mode is not off",
-                        )?;
-                        let oracle_client = OracleClient::new(&cli.oracle_cluster, keypair_path)?;
-
-                        match mode {
-                            OracleMode::DryRun => oracle_client.simulate_publish(top, &run_id)?,
-                            OracleMode::Publish => {
-                                if let Some(sig) = oracle_client.ensure_initialized().await? {
-                                    tracing::info!(signature = %sig, "Initialized trend PDA");
-                                }
-                                let sig = oracle_client.publish_trend(top, &run_id).await?;
-                                tracing::info!(signature = %sig, "Trend published to devnet");
-                            }
-                            OracleMode::Off => unreachable!(),
-                        }
-                    }
-                }
             }
             Err(e) => tracing::warn!("Drift analysis skipped: {}", e),
         }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use embedder::Embedder;
 use hk_agent::harness::{Agent, Config, Outcome, ScriptedLlm};
 use hk_agent::llm::Response;
-use hk_agent::pipeline_tools::{self, OracleTools, PipelineContext};
+use hk_agent::pipeline_tools::{self, PipelineContext};
 use hk_agent::tool::{DenyApprover, Policy, ToolRegistry};
 use serde_json::{json, Value};
 use sink::{ArticleRecord, SurrealSink};
@@ -66,9 +66,9 @@ async fn tools_work_against_real_services() {
     }
 
     let reports = std::env::temp_dir().join(format!("hk-agent-test-{}", uuid::Uuid::new_v4()));
-    let ctx = Arc::new(PipelineContext::new(embedder, sink, None, None, reports.clone(), 0.85));
+    let ctx = Arc::new(PipelineContext::new(embedder, sink, reports.clone(), 0.85));
     let mut tools = ToolRegistry::default();
-    pipeline_tools::register(&mut tools, ctx, OracleTools::None);
+    pipeline_tools::register(&mut tools, ctx);
 
     let llm = Arc::new(ScriptedLlm::new(vec![
         call("t1", "corpus_stats", json!({})),
@@ -106,7 +106,7 @@ async fn tools_work_against_real_services() {
 
     let trends = tool_output(&llm, 3);
     assert_eq!(trends["clusters"].as_array().unwrap().len(), 3);
-    assert_eq!(trends["trends"][0]["trend_index"], 0);
+    assert_eq!(trends["trends"][0]["rank"], 1);
     eprintln!("clusters: {}", trends["clusters"]);
 
     let report = tool_output(&llm, 4);
