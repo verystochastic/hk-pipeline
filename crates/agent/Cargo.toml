@@ -1,0 +1,27 @@
+[package]
+name = "hk-agent"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hk-agent"
+path = "src/main.rs"
+
+[dependencies]
+types = { workspace = true }
+connector = { path = "../connector" }
+embedder = { path = "../embedder" }
+sink = { path = "../sink" }
+drift = { path = "../drift" }
+oracle = { path = "../oracle" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
