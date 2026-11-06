@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+types = { workspace = true }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tracing = { workspace = true }
 surrealdb = { version = "3.0.1", features = ["kv-mem"] }
 tokio = { workspace = true, features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }

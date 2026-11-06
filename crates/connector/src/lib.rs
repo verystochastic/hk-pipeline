@@ -1,42 +1,35 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+pub use types::Article;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Article {
-    pub title: String,
-    pub url: Option<String>,
-    pub published: Option<String>,
-    pub source: String,
-}
+mod solana;
+pub use solana::SolanaConnector;
 
 #[async_trait]
 pub trait Connector: Send + Sync {
     async fn fetch(&self) -> Result<Vec<Article>>;
 }
 
-//GDELT DOC API Connector
-
 pub struct GdeltConnector {
-    pub query: String,
-    pub max_results: usize,
+    query: String,
+    max_results: usize,
 }
 
 impl GdeltConnector {
-    pub fn new(query: impl Into<String>) -> Self {
+    pub fn new(query: impl Into<String>, max_results: usize) -> Self {
         Self {
             query: query.into(),
-            max_results: 50,
+            max_results,
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GdeltResponse {
     articles: Option<Vec<GdeltArticle>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GdeltArticle {
     title: Option<String>,
     url: Option<String>,
@@ -48,11 +41,11 @@ impl Connector for GdeltConnector {
     async fn fetch(&self) -> Result<Vec<Article>> {
         let query = urlencoding::encode(&self.query);
         let url = format!(
-        "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=artlist&maxrecords={}&format=json",
-            query,
-            self.max_results
+            "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=artlist&maxrecords={}&format=json",
+            query, self.max_results
         );
 
+        tracing::info!(query = %self.query, max_results = self.max_results, "Fetching from GDELT");
         let response = reqwest::get(&url).await?;
         let gdelt: GdeltResponse = response.json().await?;
 

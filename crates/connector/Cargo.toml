@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+types = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 reqwest = { workspace = true }
-feed-rs = "1"
+tracing = { workspace = true }
 async-trait = "0.1"
 serde_json = { workspace = true }
 urlencoding = "2"

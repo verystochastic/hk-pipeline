@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
 tokenizers = "0.19"
 candle-core = "0.8"
 candle-nn = "0.8"
