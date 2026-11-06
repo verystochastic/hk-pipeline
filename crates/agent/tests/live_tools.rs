@@ -98,8 +98,11 @@ async fn tools_work_against_real_services() {
 
     let stats = tool_output(&llm, 1);
     assert!(stats["total_articles"].as_u64().unwrap() >= 9);
+    assert_eq!(stats["oldest_inserted_at"], "2026-11-05T00:00:00Z");
+    assert_eq!(stats["missing_inserted_at"], 0);
 
     let search = tool_output(&llm, 2);
+    assert_eq!(search["results"].as_array().unwrap().len(), 3);
     let top = search["results"][0]["title"].as_str().unwrap();
     eprintln!("top search hit: {top}");
     assert!(top.contains("air taxi") || top.contains("Hydrogen") || top.contains("aviation fuel"));

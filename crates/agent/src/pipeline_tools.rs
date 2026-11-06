@@ -160,23 +160,28 @@ tool!(
     CorpusStats,
     "corpus_stats",
     Risk::Read,
-    "Summarize the stored article corpus: total articles, count per source, and the oldest and newest insert times. Use this first to see what data exists.",
+    "Summarize the stored article corpus: total articles, count per source, the oldest and newest insert times, and the oldest and newest publication times (GDELT format, e.g. 20260217T150000Z). Older rows may lack an insert time; the counts of rows missing each time are included. Use this first to see what data exists.",
     json!({ "type": "object", "properties": {} })
 );
 
 impl CorpusStats {
     async fn run(&self, _input: Value) -> Result<Value> {
-        let records = self.0.sink.fetch_all_embeddings().await?;
+        let records = self.0.sink.fetch_article_times().await?;
         let mut by_source: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &records {
             *by_source.entry(r.source.as_str()).or_default() += 1;
         }
-        let times = records.iter().map(|r| r.inserted_at.as_str()).filter(|t| !t.is_empty());
+        let inserted: Vec<&str> = records.iter().filter_map(|r| r.inserted_at.as_deref()).collect();
+        let published: Vec<&str> = records.iter().filter_map(|r| r.published.as_deref()).collect();
         Ok(json!({
             "total_articles": records.len(),
             "by_source": by_source,
-            "oldest_inserted_at": times.clone().min(),
-            "newest_inserted_at": times.max(),
+            "oldest_inserted_at": inserted.iter().min(),
+            "newest_inserted_at": inserted.iter().max(),
+            "missing_inserted_at": records.len() - inserted.len(),
+            "oldest_published": published.iter().min(),
+            "newest_published": published.iter().max(),
+            "missing_published": records.len() - published.len(),
         }))
     }
 }

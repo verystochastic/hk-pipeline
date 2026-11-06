@@ -5,6 +5,15 @@ use surrealdb::Surreal;
 
 pub use types::{ArticleRecord, ClusterSnapshot, EmbeddingRecord, SimilarArticle};
 
+/// Lightweight per-article metadata for corpus statistics.
+#[derive(Debug, Clone)]
+pub struct ArticleTimes {
+    pub source: String,
+    pub inserted_at: Option<String>,
+    /// GDELT `seendate` format, e.g. `20260217T150000Z`, which sorts chronologically as text.
+    pub published: Option<String>,
+}
+
 pub struct SurrealSink {
     db: Surreal<Client>,
 }
@@ -86,12 +95,13 @@ impl SurrealSink {
 
     pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<SimilarArticle>> {
         // <|limit, ef|> triggers the HNSW index; ef=40 is a reasonable recall/speed tradeoff.
+        // The KNN operator alone doesn't cap the result set, so LIMIT is also required.
         let query = format!(
             "SELECT title, url, source, vector::similarity::cosine(embedding, $vec) AS score
              FROM articles
-             WHERE embedding <|{},40|> $vec
-             ORDER BY score DESC",
-            limit
+             WHERE embedding <|{limit},40|> $vec
+             ORDER BY score DESC
+             LIMIT {limit}"
         );
 
         let mut result = self
@@ -114,6 +124,32 @@ impl SurrealSink {
             .collect();
 
         Ok(articles)
+    }
+
+    /// Source, insert time and publication time of every article, without embeddings.
+    /// Missing times come back as `None`; rows stored before `inserted_at` existed have none.
+    pub async fn fetch_article_times(&self) -> Result<Vec<ArticleTimes>> {
+        let mut result = self
+            .db
+            .query("SELECT source, inserted_at, published FROM articles")
+            .await?;
+        let raw: Vec<serde_json::Value> = result.take(0)?;
+        let text = |v: &serde_json::Value, key: &str| {
+            v.get(key)
+                .and_then(|t| t.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        Ok(raw
+            .iter()
+            .filter_map(|v| {
+                Some(ArticleTimes {
+                    source: v.get("source")?.as_str()?.to_string(),
+                    inserted_at: text(v, "inserted_at"),
+                    published: text(v, "published"),
+                })
+            })
+            .collect())
     }
 
     pub async fn fetch_all_embeddings(&self) -> Result<Vec<EmbeddingRecord>> {
