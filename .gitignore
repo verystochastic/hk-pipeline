@@ -3,5 +3,3 @@ models/
 .env
 agent-runs/
 reports/
-# removed Solana program; local build output and keypairs may remain
-solana-program/
